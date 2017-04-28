@@ -33,9 +33,13 @@ int main()
   uWS::Hub h;
 
   PID pid;
-  // TODO: Initialize the pid variable.
+  pid.Init(0.16, .0001, 3.0);
 
-  h.onMessage([&pid](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
+  PID pid_throttle;
+  // first value determines how agile it behaves and adapts to new situation
+  pid_throttle.Init(0.8, .0001, 3.0);
+
+  h.onMessage([&pid,&pid_throttle](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
@@ -47,9 +51,12 @@ int main()
         std::string event = j[0].get<std::string>();
         if (event == "telemetry") {
           // j[1] is the data JSON object
+//          std::cout << j[1] << std::endl;
+
           double cte = std::stod(j[1]["cte"].get<std::string>());
           double speed = std::stod(j[1]["speed"].get<std::string>());
           double angle = std::stod(j[1]["steering_angle"].get<std::string>());
+          double throttle = std::stod(j[1]["throttle"].get<std::string>());
           double steer_value;
           /*
           * TODO: Calcuate steering value here, remember the steering value is
@@ -57,13 +64,37 @@ int main()
           * NOTE: Feel free to play around with the throttle and speed. Maybe use
           * another PID controller to control the speed!
           */
-          
+
+          // steering pid
+          pid.UpdateError(cte);
+          steer_value = pid.TotalError();
+
+          // PID Control > 4
+          double max_steering = 1.0;
+          if (steer_value > max_steering) {
+            steer_value = max_steering;
+          }
+          if (steer_value < -max_steering) {
+            steer_value = -max_steering;
+          }
+
+          // throttle pid
+          double throttle_value;
+          double max_throttle = 1.0;
+
+          // had more success with the following compared to playing with angle/speed
+          pid_throttle.UpdateError(cte);
+          throttle_value = pid_throttle.TotalError();
+
           // DEBUG
-          std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
+          std::cout << "CTE: " << cte << " Steering Value: " << steer_value << " Throttle Value: " << throttle_value << std::endl;
 
           json msgJson;
           msgJson["steering_angle"] = steer_value;
-          msgJson["throttle"] = 0.3;
+
+          // thanks to vfosca for the last tweak
+          // https://github.com/vfcosta/CarND-PID-Control-Project/commit/d36dcd5d4b16c3b8a7302bef080dea5ba1f6fd15
+          msgJson["throttle"] = 1 - fmin(max_throttle, fabs(throttle_value));
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           std::cout << msg << std::endl;
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
